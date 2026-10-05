@@ -1,0 +1,16 @@
+.env
+snapshots/*.json
+reports/*.json
+reports/*.md
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/terraform.tfvars
+terraform/crash.log

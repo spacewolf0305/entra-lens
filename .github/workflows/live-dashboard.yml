@@ -1,0 +1,77 @@
+name: live-dashboard
+
+# Scheduled posture scan -> published dashboard, with NO stored secret.
+# GitHub proves its identity to Entra via OIDC federation; Entra returns a
+# short-lived Microsoft Graph token used only for this run.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+  workflow_dispatch: {} # "Run workflow" button for on-demand runs
+
+permissions:
+  contents: read
+  id-token: write # request the GitHub OIDC token
+  pages: write # publish to GitHub Pages
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  scan-and-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Mint a Microsoft Graph token via OIDC federation
+        env:
+          TENANT_ID: ${{ vars.TENANT_ID }}
+          CLIENT_ID: ${{ vars.CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          # 1) Ask GitHub for an OIDC token addressed to Entra.
+          gh_oidc=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=api://AzureADTokenExchange" | jq -r '.value')
+          # 2) Exchange it for a Graph token (client assertion = the OIDC token; no secret).
+          graph=$(curl -sS -X POST "https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token" \
+            -d "client_id=$CLIENT_ID" \
+            -d "scope=https://graph.microsoft.com/.default" \
+            -d "grant_type=client_credentials" \
+            -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
+            -d "client_assertion=$gh_oidc" | jq -r '.access_token')
+          if [ -z "$graph" ] || [ "$graph" = "null" ]; then
+            echo "::error::OIDC token exchange failed - check the app's federated credential and CLIENT_ID/TENANT_ID variables."
+            exit 1
+          fi
+          echo "::add-mask::$graph"
+          echo "GRAPH_ACCESS_TOKEN=$graph" >> "$GITHUB_ENV"
+          echo "TENANT_ID=$TENANT_ID" >> "$GITHUB_ENV"
+
+      - name: Scan the tenant and build the dashboard
+        env:
+          REDACT_DOMAIN: "1" # mask the tenant domain on the public page
+        run: |
+          set -euo pipefail
+          python collector.py
+          python analyzer.py
+          python dashboard.py
+          mkdir -p site
+          cp "$(ls -t reports/dashboard-*.html | head -1)" site/index.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

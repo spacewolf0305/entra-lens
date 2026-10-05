@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is git-ignored.
+
+tenant_id       = "b8ccfdcf-743d-45b2-857c-8d88c1e24fb5"
+break_glass_upn = "satwikbasu03@satwikbasu03gmail.onmicrosoft.com"
+
+# Start in report-only. Flip to "enabled" only after the sign-in logs confirm
+# the policies behave as expected.
+policy_state = "enabledForReportingButNotEnforced"
